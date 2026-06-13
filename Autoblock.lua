@@ -1,15 +1,16 @@
 --[[
-    🥋 JUJUTSU SHENANIGANS – AUTO BLOCK SCRIPT 🥋
+    🥋 JUJUTSU SHENANIGANS – AUTO BLOCK SCRIPT (Enhanced) 🥋
     Features:
         - Custom GUI with radius slider (10-40 studs)
-        - Automatically presses the BLOCK key (default: F) when an enemy is within range
-        - Team detection (only blocks enemies, not teammates)
-        - Smart cooldown (0.3 sec) to avoid spam
-        - Works on JJSploit, Xeno, Krnl, Synapse, and more
+        - Auto blocks (F) when enemy within radius
+        - Team detection (red vs blue)
+        - NEW: Close button → fully stops script and removes GUI
+        - NEW: Rejoin button → teleports you back to the same server
+        - NEW: Hide button → hides the GUI (auto-block still works)
+        - Right Shift toggles auto-block ON/OFF
     Controls:
-        - Right Shift = Toggle ON/OFF
-        - Drag slider circle to adjust detection radius
-        - Drag the title bar to move the GUI
+        - Drag title bar to move GUI
+        - Drag slider to adjust radius
 --]]
 
 -- ================================[ SERVICES ]================================
@@ -17,19 +18,21 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
+local TeleportService = game:GetService("TeleportService")
 local LocalPlayer = Players.LocalPlayer
 
 -- ================================[ GLOBAL STATE ]============================
-local scriptEnabled = true
-local blockRadius = 20           -- default 20 studs
+local scriptEnabled = true           -- auto-block toggle
+local blockRadius = 20
 local lastBlockTime = 0
-local BLOCK_COOLDOWN = 0.3        -- seconds between blocks
+local BLOCK_COOLDOWN = 0.3
+local heartbeatConnection = nil      -- will be assigned
+local guiObject = nil                -- to reference GUI for hide/close
+local guiVisible = true              -- hide/show state
 
 -- ================================[ UNIVERSAL KEY PRESS SIMULATOR ]===========
--- Works on JJSploit, Xeno, Krnl, Synapse, ScriptWare, etc.
 local function pressBlockKey()
-    local keycodeNumber = 70  -- F key (block in JJS)
-    
+    local keycodeNumber = 70  -- F key
     if keypress then
         pcall(function() keypress(keycodeNumber) end)
         return true
@@ -49,45 +52,34 @@ local function pressBlockKey()
             return true
         end
     end
-    
     if not pressBlockKey.warned then
-        warn("[AutoBlock] No keypress method found. Update your executor or use a different one.")
+        warn("[AutoBlock] No keypress method found. Update executor.")
         pressBlockKey.warned = true
     end
     return false
 end
 
--- ================================[ ENEMY DETECTION (JJS TEAMS) ]==============
+-- ================================[ ENEMY DETECTION ]==========================
 local function isEnemy(player)
     if player == LocalPlayer then return false end
-    
-    -- JJS uses team colors: "Bright red" vs "Bright blue"
     local myTeam = LocalPlayer.Team
     local theirTeam = player.Team
-    
     if myTeam and theirTeam then
         return myTeam ~= theirTeam
     end
-    
-    -- Fallback: treat everyone as enemy (free-for-all)
-    return true
+    return true  -- FFA mode
 end
 
 -- ================================[ AUTO BLOCK LOGIC ]========================
 local function checkAndBlock()
     if not scriptEnabled then return end
-    
     local character = LocalPlayer.Character
     if not character or character.Parent == nil then return end
-    
     local hrp = character:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
-    
     local currentTime = tick()
     if currentTime - lastBlockTime < BLOCK_COOLDOWN then return end
-    
     local myPosition = hrp.Position
-    
     for _, player in ipairs(Players:GetPlayers()) do
         if isEnemy(player) then
             local otherChar = player.Character
@@ -98,7 +90,7 @@ local function checkAndBlock()
                     if distance <= blockRadius then
                         pressBlockKey()
                         lastBlockTime = currentTime
-                        break  -- block once per check
+                        break
                     end
                 end
             end
@@ -106,12 +98,34 @@ local function checkAndBlock()
     end
 end
 
--- Run the check every frame (Heartbeat ~60 fps)
-RunService.Heartbeat:Connect(checkAndBlock)
+-- Start the heartbeat loop
+heartbeatConnection = RunService.Heartbeat:Connect(checkAndBlock)
 
--- ================================[ GUI CREATION ]============================
+-- ================================[ REJOIN FUNCTION ]==========================
+local function rejoinServer()
+    local placeId = game.PlaceId
+    local jobId = game.JobId
+    TeleportService:TeleportToPlaceInstance(placeId, jobId, LocalPlayer)
+end
+
+-- ================================[ CLOSE SCRIPT ]=============================
+local function closeScript()
+    -- Disconnect the auto-block loop
+    if heartbeatConnection then
+        heartbeatConnection:Disconnect()
+        heartbeatConnection = nil
+    end
+    -- Destroy GUI if it exists
+    if guiObject then
+        guiObject:Destroy()
+        guiObject = nil
+    end
+    print("[AutoBlock] Script closed. All connections removed.")
+end
+
+-- ================================[ GUI CREATION ]=============================
 local function CreateGUI()
-    -- Prevent duplicate GUIs
+    -- Remove any existing GUI first
     if CoreGui:FindFirstChild("AutoBlockGUI") then
         CoreGui:FindFirstChild("AutoBlockGUI"):Destroy()
     end
@@ -120,10 +134,11 @@ local function CreateGUI()
     gui.Name = "AutoBlockGUI"
     gui.Parent = CoreGui
     gui.ResetOnSpawn = false
+    guiObject = gui
     
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 220, 0, 110)
-    frame.Position = UDim2.new(0.5, -110, 0.8, -55)
+    frame.Size = UDim2.new(0, 280, 0, 160)  -- made taller for extra buttons
+    frame.Position = UDim2.new(0.5, -140, 0.8, -80)
     frame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
     frame.BackgroundTransparency = 0.15
     frame.BorderSizePixel = 0
@@ -150,9 +165,10 @@ local function CreateGUI()
     title.TextXAlignment = Enum.TextXAlignment.Center
     title.Parent = frame
     
+    -- Radius label
     local radiusLabel = Instance.new("TextLabel")
     radiusLabel.Size = UDim2.new(0.7, 0, 0, 22)
-    radiusLabel.Position = UDim2.new(0.05, 0, 0.45, 0)
+    radiusLabel.Position = UDim2.new(0.05, 0, 0.35, 0)
     radiusLabel.BackgroundTransparency = 1
     radiusLabel.Text = "Block Radius: " .. blockRadius .. " studs"
     radiusLabel.TextColor3 = Color3.fromRGB(200, 200, 220)
@@ -161,9 +177,10 @@ local function CreateGUI()
     radiusLabel.TextXAlignment = Enum.TextXAlignment.Left
     radiusLabel.Parent = frame
     
+    -- Slider frame
     local sliderFrame = Instance.new("Frame")
     sliderFrame.Size = UDim2.new(0.9, 0, 0, 6)
-    sliderFrame.Position = UDim2.new(0.05, 0, 0.75, 0)
+    sliderFrame.Position = UDim2.new(0.05, 0, 0.58, 0)
     sliderFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
     sliderFrame.BorderSizePixel = 0
     sliderFrame.Parent = frame
@@ -192,6 +209,7 @@ local function CreateGUI()
     dragCorner.CornerRadius = UDim.new(1, 0)
     dragCorner.Parent = dragButton
     
+    -- Status indicator (active/inactive)
     local statusIndicator = Instance.new("Frame")
     statusIndicator.Size = UDim2.new(0, 12, 0, 12)
     statusIndicator.Position = UDim2.new(0.93, 0, 0.08, 0)
@@ -204,7 +222,7 @@ local function CreateGUI()
     
     local toggleText = Instance.new("TextLabel")
     toggleText.Size = UDim2.new(0, 50, 0, 22)
-    toggleText.Position = UDim2.new(0.65, 0, 0.45, 0)
+    toggleText.Position = UDim2.new(0.65, 0, 0.35, 0)
     toggleText.BackgroundTransparency = 1
     toggleText.Text = "ACTIVE"
     toggleText.TextColor3 = Color3.fromRGB(50, 200, 50)
@@ -213,7 +231,68 @@ local function CreateGUI()
     toggleText.TextXAlignment = Enum.TextXAlignment.Right
     toggleText.Parent = frame
     
-    -- Slider drag logic
+    -- ========== BUTTONS (Close, Rejoin, Hide) ==========
+    local buttonWidth = 80
+    local buttonY = 0.78
+    local spacing = 10
+    
+    -- Close Button
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Size = UDim2.new(0, buttonWidth, 0, 26)
+    closeBtn.Position = UDim2.new(0.05, 0, buttonY, 0)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(150, 50, 50)
+    closeBtn.BorderSizePixel = 0
+    closeBtn.Text = "✖ CLOSE"
+    closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.TextSize = 12
+    closeBtn.Parent = frame
+    local closeCorner = Instance.new("UICorner")
+    closeCorner.CornerRadius = UDim.new(0, 4)
+    closeCorner.Parent = closeBtn
+    closeBtn.MouseButton1Click:Connect(function()
+        closeScript()
+    end)
+    
+    -- Rejoin Button
+    local rejoinBtn = Instance.new("TextButton")
+    rejoinBtn.Size = UDim2.new(0, buttonWidth, 0, 26)
+    rejoinBtn.Position = UDim2.new(0.05 + (buttonWidth+spacing)/frame.Size.X.Scale, 0, buttonY, 0)
+    rejoinBtn.BackgroundColor3 = Color3.fromRGB(50, 100, 150)
+    rejoinBtn.BorderSizePixel = 0
+    rejoinBtn.Text = "🔄 REJOIN"
+    rejoinBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    rejoinBtn.Font = Enum.Font.GothamBold
+    rejoinBtn.TextSize = 12
+    rejoinBtn.Parent = frame
+    local rejoinCorner = Instance.new("UICorner")
+    rejoinCorner.CornerRadius = UDim.new(0, 4)
+    rejoinCorner.Parent = rejoinBtn
+    rejoinBtn.MouseButton1Click:Connect(function()
+        rejoinServer()
+    end)
+    
+    -- Hide Button
+    local hideBtn = Instance.new("TextButton")
+    hideBtn.Size = UDim2.new(0, buttonWidth, 0, 26)
+    hideBtn.Position = UDim2.new(0.05 + 2*(buttonWidth+spacing)/frame.Size.X.Scale, 0, buttonY, 0)
+    hideBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 120)
+    hideBtn.BorderSizePixel = 0
+    hideBtn.Text = "👁 HIDE"
+    hideBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    hideBtn.Font = Enum.Font.GothamBold
+    hideBtn.TextSize = 12
+    hideBtn.Parent = frame
+    local hideCorner = Instance.new("UICorner")
+    hideCorner.CornerRadius = UDim.new(0, 4)
+    hideCorner.Parent = hideBtn
+    hideBtn.MouseButton1Click:Connect(function()
+        guiVisible = not guiVisible
+        gui.Enabled = guiVisible
+        hideBtn.Text = guiVisible and "👁 HIDE" or "👁 SHOW"
+    end)
+    
+    -- ========== SLIDER DRAG LOGIC ==========
     local dragging = false
     dragButton.MouseButton1Down:Connect(function()
         dragging = true
@@ -254,7 +333,7 @@ local function CreateGUI()
         end)
     end)
     
-    -- Master toggle (Right Shift)
+    -- ========== MASTER TOGGLE (Right Shift) ==========
     UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if gameProcessed then return end
         if input.KeyCode == Enum.KeyCode.RightShift then
@@ -271,7 +350,7 @@ local function CreateGUI()
         end
     end)
     
-    -- Make GUI draggable
+    -- ========== MAKE GUI DRAGGABLE ==========
     local draggingGui = false
     local dragStart, frameStart
     frame.InputBegan:Connect(function(input)
@@ -293,10 +372,10 @@ local function CreateGUI()
         end
     end)
     
-    print("[JJS AutoBlock] GUI loaded. Press Right Shift to toggle. Drag slider to set radius (10-40).")
+    print("[JJS AutoBlock] GUI loaded. Right Shift toggles auto-block. Close button stops script. Rejoin button teleports. Hide button hides GUI.")
 end
 
--- Wait for game to load fully
+-- ================================[ INIT ]====================================
 task.wait(1.5)
 CreateGUI()
-print("[JJS AutoBlock] Script ready. Auto-blocking ACTIVE. Will press F when enemy is within radius.")
+print("[JJS AutoBlock] Script ready. Auto-blocking ACTIVE.")
