@@ -1,59 +1,76 @@
 --[[
-    ⚔️ Forsaken | Auto Block Script ⚔️
+    🥋 JUJUTSU SHENANIGANS – AUTO BLOCK SCRIPT 🥋
     Features:
-        - Custom GUI with a draggable radius slider (10-40 studs)
-        - Auto Block when ANY player (survivor OR killer) is within your set radius
-        - Smart cooldown system to avoid spam-blocking
-        - Advanced distance checks optimized for performance
-        - Works on JJSploit, Xeno, and most modern executors
+        - Custom GUI with radius slider (10-40 studs)
+        - Automatically presses the BLOCK key (default: F) when an enemy is within range
+        - Team detection (only blocks enemies, not teammates)
+        - Smart cooldown (0.3 sec) to avoid spam
+        - Works on JJSploit, Xeno, Krnl, Synapse, and more
     Controls:
-        - Toggle the GUI with your hotkey (default: RightShift)
-        - Adjust the block radius with the slider
-    Coded by: Rebel Dev
+        - Right Shift = Toggle ON/OFF
+        - Drag slider circle to adjust detection radius
+        - Drag the title bar to move the GUI
 --]]
 
 -- ================================[ SERVICES ]================================
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
 local CoreGui = game:GetService("CoreGui")
 local LocalPlayer = Players.LocalPlayer
 
 -- ================================[ GLOBAL STATE ]============================
-local scriptEnabled = true              -- Master toggle
-local blockRadius = 20                  -- Default radius (20 studs)
-local lastBlockTime = 0                 -- Cooldown tracker
-local BLOCK_COOLDOWN = 0.3              -- Seconds between blocks (prevents spam)
+local scriptEnabled = true
+local blockRadius = 20           -- default 20 studs
+local lastBlockTime = 0
+local BLOCK_COOLDOWN = 0.3        -- seconds between blocks
 
--- ================================[ KEY SIMULATION ]=========================
--- This smart function will try multiple methods to simulate an 'F' key press.
--- Different executors have different APIs; this covers the most common ones.
-local function simulateKeyPress(keyCode)
-    -- METHOD 1: Check for executor-specific functions
+-- ================================[ UNIVERSAL KEY PRESS SIMULATOR ]===========
+-- Works on JJSploit, Xeno, Krnl, Synapse, ScriptWare, etc.
+local function pressBlockKey()
+    local keycodeNumber = 70  -- F key (block in JJS)
+    
     if keypress then
-        keypress(keyCode)
+        pcall(function() keypress(keycodeNumber) end)
         return true
     elseif pressKey then
-        pressKey(keyCode)
+        pcall(function() pressKey(keycodeNumber) end)
         return true
     elseif syn and syn.keypress then
-        syn.keypress(keyCode)
+        pcall(function() syn.keypress(keycodeNumber) end)
         return true
-    elseif KRNL_IMPL then
-        KRNL_IMPL.keypress(keyCode)
+    elseif KRNL_IMPL and KRNL_IMPL.keypress then
+        pcall(function() KRNL_IMPL.keypress(keycodeNumber) end)
         return true
-    -- METHOD 2: Use VirtualInput if available (most reliable in Studio/native)
     elseif UserInputService.CreateVirtualInput then
-        local success, virtual = pcall(function()
-            return UserInputService:CreateVirtualInput()
-        end)
+        local success, virtual = pcall(UserInputService.CreateVirtualInput, UserInputService)
         if success and virtual then
-            virtual:InjectKeyPress(keyCode)
+            pcall(function() virtual:InjectKeyPress(keycodeNumber) end)
             return true
         end
     end
+    
+    if not pressBlockKey.warned then
+        warn("[AutoBlock] No keypress method found. Update your executor or use a different one.")
+        pressBlockKey.warned = true
+    end
     return false
+end
+
+-- ================================[ ENEMY DETECTION (JJS TEAMS) ]==============
+local function isEnemy(player)
+    if player == LocalPlayer then return false end
+    
+    -- JJS uses team colors: "Bright red" vs "Bright blue"
+    local myTeam = LocalPlayer.Team
+    local theirTeam = player.Team
+    
+    if myTeam and theirTeam then
+        return myTeam ~= theirTeam
+    end
+    
+    -- Fallback: treat everyone as enemy (free-for-all)
+    return true
 end
 
 -- ================================[ AUTO BLOCK LOGIC ]========================
@@ -71,19 +88,17 @@ local function checkAndBlock()
     
     local myPosition = hrp.Position
     
-    -- Scan ALL other players in the game
     for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer then
+        if isEnemy(player) then
             local otherChar = player.Character
-            if otherChar and otherChar.Parent ~= nil then
+            if otherChar and otherChar.Parent then
                 local otherHrp = otherChar:FindFirstChild("HumanoidRootPart")
                 if otherHrp then
                     local distance = (myPosition - otherHrp.Position).Magnitude
                     if distance <= blockRadius then
-                        -- An enemy is within range - BLOCK!
-                        simulateKeyPress(Enum.KeyCode.F)
+                        pressBlockKey()
                         lastBlockTime = currentTime
-                        break  -- Block once per check cycle; prevents double-block on same frame
+                        break  -- block once per check
                     end
                 end
             end
@@ -91,23 +106,21 @@ local function checkAndBlock()
     end
 end
 
--- ================================[ PERFORMANCE LOOP ]========================
--- Using Heartbeat for smooth, game-tied updates (roughly 60fps)
-local heartbeatConnection
-heartbeatConnection = RunService.Heartbeat:Connect(function()
-    checkAndBlock()
-end)
+-- Run the check every frame (Heartbeat ~60 fps)
+RunService.Heartbeat:Connect(checkAndBlock)
 
 -- ================================[ GUI CREATION ]============================
-local function CreateModernSlider()
-    -- Create ScreenGui
+local function CreateGUI()
+    -- Prevent duplicate GUIs
+    if CoreGui:FindFirstChild("AutoBlockGUI") then
+        CoreGui:FindFirstChild("AutoBlockGUI"):Destroy()
+    end
+    
     local gui = Instance.new("ScreenGui")
     gui.Name = "AutoBlockGUI"
     gui.Parent = CoreGui
-    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    gui.ResetOnSpawn = false  -- Stays active across deaths
+    gui.ResetOnSpawn = false
     
-    -- Main Frame
     local frame = Instance.new("Frame")
     frame.Size = UDim2.new(0, 220, 0, 110)
     frame.Position = UDim2.new(0.5, -110, 0.8, -55)
@@ -117,30 +130,26 @@ local function CreateModernSlider()
     frame.ClipsDescendants = true
     frame.Parent = gui
     
-    -- Corner rounding
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, 8)
     corner.Parent = frame
     
-    -- Drop Shadow / Outline
     local stroke = Instance.new("UIStroke")
     stroke.Color = Color3.fromRGB(80, 80, 120)
     stroke.Thickness = 1
     stroke.Parent = frame
     
-    -- Title Label
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, 0, 0, 28)
     title.Position = UDim2.new(0, 0, 0, 0)
     title.BackgroundTransparency = 1
-    title.Text = "⚔️ AUTO BLOCK ⚔️"
+    title.Text = "🥋 AUTO BLOCK (JJS) 🥋"
     title.TextColor3 = Color3.fromRGB(255, 200, 100)
     title.Font = Enum.Font.GothamBold
     title.TextSize = 16
     title.TextXAlignment = Enum.TextXAlignment.Center
     title.Parent = frame
     
-    -- Radius Label
     local radiusLabel = Instance.new("TextLabel")
     radiusLabel.Size = UDim2.new(0.7, 0, 0, 22)
     radiusLabel.Position = UDim2.new(0.05, 0, 0.45, 0)
@@ -152,7 +161,6 @@ local function CreateModernSlider()
     radiusLabel.TextXAlignment = Enum.TextXAlignment.Left
     radiusLabel.Parent = frame
     
-    -- Slider Frame (for background)
     local sliderFrame = Instance.new("Frame")
     sliderFrame.Size = UDim2.new(0.9, 0, 0, 6)
     sliderFrame.Position = UDim2.new(0.05, 0, 0.75, 0)
@@ -163,7 +171,6 @@ local function CreateModernSlider()
     sliderCorner.CornerRadius = UDim.new(1, 0)
     sliderCorner.Parent = sliderFrame
     
-    -- Slider Fill (dynamic)
     local fill = Instance.new("Frame")
     fill.Size = UDim2.new((blockRadius - 10) / 30, 0, 1, 0)
     fill.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
@@ -173,7 +180,6 @@ local function CreateModernSlider()
     fillCorner.CornerRadius = UDim.new(1, 0)
     fillCorner.Parent = fill
     
-    -- Drag Button (Circle)
     local dragButton = Instance.new("TextButton")
     dragButton.Size = UDim2.new(0, 16, 0, 16)
     dragButton.Position = UDim2.new((blockRadius - 10) / 30, -8, 0.5, -8)
@@ -186,7 +192,6 @@ local function CreateModernSlider()
     dragCorner.CornerRadius = UDim.new(1, 0)
     dragCorner.Parent = dragButton
     
-    -- Status Indicator (Green/Red)
     local statusIndicator = Instance.new("Frame")
     statusIndicator.Size = UDim2.new(0, 12, 0, 12)
     statusIndicator.Position = UDim2.new(0.93, 0, 0.08, 0)
@@ -197,7 +202,6 @@ local function CreateModernSlider()
     statusCorner.CornerRadius = UDim.new(1, 0)
     statusCorner.Parent = statusIndicator
     
-    -- Toggle Button Text
     local toggleText = Instance.new("TextLabel")
     toggleText.Size = UDim2.new(0, 50, 0, 22)
     toggleText.Position = UDim2.new(0.65, 0, 0.45, 0)
@@ -209,7 +213,7 @@ local function CreateModernSlider()
     toggleText.TextXAlignment = Enum.TextXAlignment.Right
     toggleText.Parent = frame
     
-    -- ========== DRAG LOGIC for Slider ==========
+    -- Slider drag logic
     local dragging = false
     dragButton.MouseButton1Down:Connect(function()
         dragging = true
@@ -250,31 +254,26 @@ local function CreateModernSlider()
         end)
     end)
     
-    -- ========== MASTER TOGGLE (RightShift by default) ==========
-    local function toggleScript()
-        scriptEnabled = not scriptEnabled
-        if scriptEnabled then
-            statusIndicator.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
-            toggleText.Text = "ACTIVE"
-            toggleText.TextColor3 = Color3.fromRGB(50, 200, 50)
-        else
-            statusIndicator.BackgroundColor3 = Color3.fromRGB(150, 50, 50)
-            toggleText.Text = "OFF"
-            toggleText.TextColor3 = Color3.fromRGB(150, 50, 50)
-        end
-    end
-    
+    -- Master toggle (Right Shift)
     UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if gameProcessed then return end
         if input.KeyCode == Enum.KeyCode.RightShift then
-            toggleScript()
+            scriptEnabled = not scriptEnabled
+            if scriptEnabled then
+                statusIndicator.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+                toggleText.Text = "ACTIVE"
+                toggleText.TextColor3 = Color3.fromRGB(50, 200, 50)
+            else
+                statusIndicator.BackgroundColor3 = Color3.fromRGB(150, 50, 50)
+                toggleText.Text = "OFF"
+                toggleText.TextColor3 = Color3.fromRGB(150, 50, 50)
+            end
         end
     end)
     
-    -- Make the entire frame draggable (move the GUI around)
+    -- Make GUI draggable
     local draggingGui = false
-    local dragStart
-    local frameStart
+    local dragStart, frameStart
     frame.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             draggingGui = true
@@ -294,11 +293,10 @@ local function CreateModernSlider()
         end
     end)
     
-    print("[AUTO BLOCK] GUI Loaded. Press RightShift to toggle. Drag the GUI by its top bar.")
+    print("[JJS AutoBlock] GUI loaded. Press Right Shift to toggle. Drag slider to set radius (10-40).")
 end
 
--- ================================[ SAFE EXECUTION ]==========================
--- Delay to ensure game fully loads and executor is ready
+-- Wait for game to load fully
 task.wait(1.5)
-CreateModernSlider()
-print("[AUTO BLOCK] Script fully loaded! Radius slider ready, Auto Block: ACTIVE")
+CreateGUI()
+print("[JJS AutoBlock] Script ready. Auto-blocking ACTIVE. Will press F when enemy is within radius.")
